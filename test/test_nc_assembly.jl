@@ -1,6 +1,7 @@
 using JuAFEM, SparseArrays
 
 
+function solve()
 function generate_nc_grid(C::Type{Quadrilateral})
     nodes = Array{Node{2,Float64},1}(undef, 8)
     nodes[1] = Node{2,Float64}(Vec(0.0,0.0))
@@ -79,24 +80,24 @@ function doassemble(cellvalues::CellScalarValues{dim}, K::SparseMatrixCSC, dh::D
     return K, f
 end
 
-P = [1 0 0 0 0 0 0 0
-     0 1 0 0 0 0 0 0
-     0 0 1 0 0 0 0 0
-     0 0 0 1 0 0 0 0
-     0 0 0 0 1 0 0 0
-     0 0 0 0 0 1 0 0
-     0 0 0 0 0 0 1 0
-     0 0 0 0 0 0 0 1
-     0 0 0.5 0 0.5 0 0 0]
+P = [1 0 0 0 0 0 0
+     0 1 0 0 0 0 0
+     0 0 1 0 0 0 0
+     0 0 0 1 0 0 0
+     0 0 0.5 0.5 0 0 0
+     0 0 0 0 1 0 0
+     0 0 0 0 0 1 0
+     0 0 0 0 0 0 1]
 
 Â, f̂ = doassemble(cellvalues, K, dh);
-A = (P*Â)*P'
+A = (P'*Â)*P
 A = SparseMatrixCSC(A)
-f = P*f̂
+f = P'*f̂
 apply!(A, f, ch)
 
 u = A \ f;
 
 vtk_grid("heat_equation", dh) do vtk
-    vtk_point_data(vtk, dh, u)
+    vtk_point_data(vtk, dh, P*u)
+end
 end
