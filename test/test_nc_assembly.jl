@@ -100,4 +100,6 @@ u = A \ f;
 vtk_grid("heat_equation", dh) do vtk
     vtk_point_data(vtk, dh, P*u)
 end
+
+return Â, f̂, A, f, u, P
 end
