@@ -43,7 +43,7 @@
 # \end{aligned}
 # ```
 #
-# where we assume no flux boundary condition for $\varphi_{\textrm{m}}, \varphi_{\textrm{e}}$, except in one point. This models a grounding through a Dirichlet condition of zero in this point. 
+# where we assume no flux boundary condition for $\varphi_{\textrm{m}}, \varphi_{\textrm{e}}$, except in one point. This models a grounding through a Dirichlet condition of zero in this point.
 #
 # Please note that technically speaking we obtain a [differential-algebraic system of equations](https://en.wikipedia.org/wiki/Differential-algebraic_system_of_equations) (DAE), so note that we cannot apply all ODE solvers to the resulting system. However, [DifferentialEquations.jl](https://github.com/SciML/DifferentialEquations.jl) expects for some solvers to state the DAE as an ODE in mass matrix form and because this form arises naturally in finite element methods for many common problems, let us stick with it. In this example the required Jacobians for the ODE solver are computed via automatic differentiation, but in optimized implementations they can also be manually provided.
 #
@@ -72,7 +72,7 @@
 #
 # ## Commented Program
 #
-using JuAFEM, SparseArrays, BlockArrays
+using JuAFEM, SparseArrays, BlockArrays, LinearAlgebra
 # Instead of using a self written time integrator,
 # we will use in this example a time integrator of [DifferentialEquations.jl](https://github.com/SciML/DifferentialEquations.jl)
 # [DifferentialEquations.jl](https://github.com/SciML/DifferentialEquations.jl) is a powerful package, from which we will use
@@ -82,7 +82,7 @@ import DifferentialEquations
 #
 # Now, we define the computational domain and cellvalues. We exploit the fact that all fields of
 # the Bidomain model are approximated with the same Ansatz. Hence, we use one CellScalarValues struct for all three fields.
-grid = generate_grid(Quadrilateral, (60, 60), Vec{2}((0.0,0.0)), Vec{2}((2.5,2.5)))
+grid = generate_grid(Quadrilateral, (25, 25), Vec{2}((0.0,0.0)), Vec{2}((2.5,2.5)))
 addnodeset!(grid, "ground", x-> x[2] == -0 && x[1] == -0)
 dim = 2
 Δt = 0.1
@@ -97,7 +97,6 @@ cellvalues = CellScalarValues(qr, ip);
 dh = DofHandler(grid)
 push!(dh, :ϕₘ, 1)
 push!(dh, :ϕₑ, 1)
-push!(dh, :s, 1)
 close!(dh);
 #
 # The linear parts of the Bidomain equations contribute to the stiffness and mass matrix, respectively.
@@ -168,18 +167,17 @@ update!(ch, 0.0);
 function doassemble_linear!(cellvalues::CellScalarValues{dim}, K::SparseMatrixCSC, M::SparseMatrixCSC, dh::DofHandler; params::FHNParameters = FHNParameters()) where {dim}
     n_ϕₘ = getnbasefunctions(cellvalues)
     n_ϕₑ = getnbasefunctions(cellvalues)
-    n_s = getnbasefunctions(cellvalues)
-    ntotal = n_ϕₘ + n_ϕₑ + n_s
+    ntotal = n_ϕₘ + n_ϕₑ
     n_basefuncs = getnbasefunctions(cellvalues)
     #We use PseudoBlockArrays to write into the right places of Ke
-    Ke = PseudoBlockArray(zeros(ntotal, ntotal), [n_ϕₘ, n_ϕₑ, n_s], [n_ϕₘ, n_ϕₑ, n_s])
-    Me = PseudoBlockArray(zeros(ntotal, ntotal), [n_ϕₘ, n_ϕₑ, n_s], [n_ϕₘ, n_ϕₑ, n_s])
+    Ke = PseudoBlockArray(zeros(ntotal, ntotal), [n_ϕₘ, n_ϕₑ], [n_ϕₘ, n_ϕₑ])
+    Me = PseudoBlockArray(zeros(ntotal, ntotal), [n_ϕₘ, n_ϕₑ], [n_ϕₘ, n_ϕₑ])
 
     assembler_K = start_assemble(K)
     assembler_M = start_assemble(M)
 
     #Here the block indices of the variables are defined.
-    ϕₘ▄, ϕₑ▄, s▄ = 1, 2, 3
+    ϕₘ▄, ϕₑ▄ = 1, 2
 
     #Now we iterate over all cells of the grid
     @inbounds for cell in CellIterator(dh)
@@ -211,14 +209,8 @@ function doassemble_linear!(cellvalues::CellScalarValues{dim}, K::SparseMatrixCS
                     Ke[BlockIndex((ϕₘ▄,ϕₑ▄),(i,j))] -= ((κᵢ_loc ⋅ ∇Nᵢ) ⋅ ∇Nⱼ) * dΩ
                     Ke[BlockIndex((ϕₑ▄,ϕₘ▄),(i,j))] -= ((κᵢ_loc ⋅ ∇Nᵢ) ⋅ ∇Nⱼ) * dΩ
                     Ke[BlockIndex((ϕₑ▄,ϕₑ▄),(i,j))] -= (((κₑ_loc + κᵢ_loc) ⋅ ∇Nᵢ) ⋅ ∇Nⱼ) * dΩ
-                    #linear reaction parts
-                    Ke[BlockIndex((ϕₘ▄,ϕₘ▄),(i,j))] -= params.a * Nᵢ * Nⱼ * dΩ
-                    Ke[BlockIndex((ϕₘ▄,s▄),(i,j))]  -= Nᵢ * Nⱼ * dΩ
-                    Ke[BlockIndex((s▄,ϕₘ▄),(i,j))]  += params.e * params.b * Nᵢ * Nⱼ * dΩ
-                    Ke[BlockIndex((s▄,s▄),(i,j))]   -= params.e * params.c * Nᵢ * Nⱼ * dΩ
-                    #mass matrices
+                    #mass matrix
                     Me[BlockIndex((ϕₘ▄,ϕₘ▄),(i,j))] += Cₘ_loc * χ_loc * Nᵢ * Nⱼ * dΩ
-                    Me[BlockIndex((s▄,s▄),(i,j))]   += Nᵢ * Nⱼ * dΩ
                 end
             end
         end
@@ -256,30 +248,32 @@ function apply_nonlinear!(du, u, p, t)
     ip = p[5]
     qr = p[6]
     cellvalues = p[7]
-    n_basefuncs = getnquadpoints(cellvalues)
+    n_basefuncs = getnbasefunctions(cellvalues)
+    n_qp = getnquadpoints(cellvalues)
 
-    for cell in CellIterator(dh)
+    for (cellidx, cell) in enumerate(CellIterator(dh))
         JuAFEM.reinit!(cellvalues, cell)
         _celldofs = celldofs(cell)
         ϕₘ_celldofs = _celldofs[dof_range(dh, :ϕₘ)]
-        s_celldofs = _celldofs[dof_range(dh, :s)]
-        ϕₘe = u[ϕₘ_celldofs]
+        s_celldofs = (ndofs(dh) + (cellidx-1)*n_qp) .+ (0:(n_qp-1))
+        ϕₘ_cell = u[ϕₘ_celldofs]
         se = u[s_celldofs]
         coords = getcoordinates(cell)
-        for q_point in 1:getnquadpoints(cellvalues)
+        for q_point in 1:n_qp
             x_qp = spatial_coordinate(cellvalues, q_point, coords)
             χ_loc = χ(x_qp)
             dΩ = getdetJdV(cellvalues, q_point)
-            val = function_value(cellvalues, q_point, ϕₘe)
-            nl_contrib = - val^3 + (1+params.a)*val^2
+            ϕₘ_qp = function_value(cellvalues, q_point, ϕₘ_cell)
+            nl_contrib = ϕₘ_qp*(1.0-ϕₘ_qp)*(ϕₘ_qp-params.a) - se[q_point]
             for j in 1:n_basefuncs
                 Nⱼ = shape_value(cellvalues, q_point, j)
                 du[ϕₘ_celldofs[j]] += χ_loc * nl_contrib * Nⱼ * dΩ
-                du[s_celldofs[j]]  -= params.e * params.d * Nⱼ * dΩ
             end
+
+            #Pure local part
+            du[s_celldofs[q_point]] = params.e * (params.b * ϕₘ_qp - params.c * se[q_point] - params.d)
         end
     end
-    apply_zero!(du, ch)
 end;
 #
 # We assemble the linear parts into `K` and `M`, respectively.
@@ -292,19 +286,28 @@ apply!(M, ch);
 # the same parameters as `apply_nonlinear!`, which is essentially the defined interface by
 # [DifferentialEquations.jl](https://github.com/SciML/DifferentialEquations.jl)
 function bidomain!(du,u,p,t)
-    du .= K * u
+    K = p[1]
+    dh = p[2]
+    ch = p[3]
+
+    du[1:ndofs(dh)] .= K * u[1:ndofs(dh)]
+
     apply_nonlinear!(du, u, p, t)
+
+    apply_zero!(du[1:ndofs(dh)], ch)
 end;
 # In the following code block we define the initial condition of the problem. We first
 # initialize a zero vector of length `ndofs(dh)` and fill it afterwards in a for loop over all cells.
-u₀ = zeros(ndofs(dh));
-for cell in CellIterator(dh)
+n_qp = getnquadpoints(cellvalues);
+n_qp_total = n_qp*getncells(grid);
+u₀ = zeros(ndofs(dh) + n_qp_total);
+for (cellidx,cell) in enumerate(CellIterator(dh))
     _celldofs = celldofs(cell)
     ϕₘ_celldofs = _celldofs[dof_range(dh, :ϕₘ)]
-    s_celldofs = _celldofs[dof_range(dh, :s)]
+    s_celldofs = (ndofs(dh) + (cellidx-1)*n_qp) .+ (0:(n_qp-1))
     for (i, coordinate) in enumerate(getcoordinates(cell))
         if coordinate[2] >= 1.25
-            u₀[s_celldofs[i]] = 0.1
+            u₀[s_celldofs[i]] = 0.1 #FIXME (qp index!)
         end
         if coordinate[1] <= 1.25 && coordinate[2] <= 1.25
             u₀[ϕₘ_celldofs[i]] = 1.0
@@ -313,9 +316,15 @@ for cell in CellIterator(dh)
 end
 
 # We can now state and solve the `ODEProblem`. Since the jacobian of our problem is large and sparse it is advantageous to avoid building a dense matrix (with dense solver) where possible. In [DifferentialEquations.jl](https://github.com/SciML/DifferentialEquations.jl) we can enforce using sparse jacobian matrices by providing a prototype jacobian with proper sparsity pattern, see [here](https://diffeq.sciml.ai/stable/tutorials/advanced_ode_example/#Speeding-Up-Jacobian-Calculations) for details. In our problem it turns out that the K captures this pattern sufficiently, so for the sake if simplicity we simply use it in this example.
-jac_sparsity = sparse(K)
+#TODO: Multilevel-Newton
+mass_matrix = BlockArray(spzeros(ndofs(dh) + n_qp_total, ndofs(dh) + n_qp_total), [ndofs(dh), n_qp_total], [ndofs(dh), n_qp_total])
+setblock!(mass_matrix, M, 1, 1)
+setblock!(mass_matrix, sparse(I, n_qp_total, n_qp_total), 2, 2)
+mass_matrix = sparse(mass_matrix)
+#TODO: (Automatic?) Sparsity
+#jac_sparsity = ...
 
-f = DifferentialEquations.ODEFunction(bidomain!,mass_matrix=M;jac_prototype=jac_sparsity)
+f = DifferentialEquations.ODEFunction(bidomain!,mass_matrix=mass_matrix)
 p = [K, dh, ch, FHNParameters(), ip, qr, cellvalues]
 prob_mm = DifferentialEquations.ODEProblem(f,u₀,(0.0,T),p)
 
