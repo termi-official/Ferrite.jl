@@ -235,77 +235,86 @@ using Ferrite, SparseArrays, ModelingToolkit, PDEBase, SciMLBase
 # Helpers
 import Symbolics: Rectangle, ClosedInterval
 
-"""
-Carries constructors for trial and test functions.
-"""
-struct ScalarRitzGalerkinFEM <: SciMLBase.AbstractDiscretization
-    ip_ctor::Function
-    ansatz::Symbol
-    test::Symbol
-end
+# """
+# Carries constructors for trial and test functions.
+# """
+# struct ScalarRitzGalerkinFEM <: SciMLBase.AbstractDiscretization
+#     ip_ctor::Function
+#     ansatz::Symbol
+#     test::Symbol
+# end
 
 struct ScalarRitzGalerkinSpace <: AbstractDiscreteSpace
 end
 
-function PDEBase.check_boundarymap(bmap, discretization::ScalarRitzGalerkinFEM)
-end
+# function PDEBase.check_boundarymap(bmap, discretization::ScalarRitzGalerkinFEM)
+# end
 
-function PDEBase.construct_disc_state(discretization::ScalarRitzGalerkinFEM)
-    PDEBase.EquationState()
-end
+# function PDEBase.construct_disc_state(discretization::ScalarRitzGalerkinFEM)
+#     PDEBase.EquationState()
+# end
 
-function PDEBase.construct_discrete_space(vars::PDEBase.VariableMap, discretization::ScalarRitzGalerkinFEM)
-    # x̄ = vars.x̄
-    # t = vars.time
-    # depvars = vars.ū
-    # nspace = length(x̄)
+# function PDEBase.construct_discrete_space(vars::PDEBase.VariableMap, discretization::ScalarRitzGalerkinFEM)
+#     # x̄ = vars.x̄
+#     # t = vars.time
+#     # depvars = vars.ū
+#     # nspace = length(x̄)
     
-    return ScalarRitzGalerkinSpace()
-end
+#     return ScalarRitzGalerkinSpace()
+# end
 
 # ModelingToolkit stuff 1D
-@parameters x₁ f
-@variables u(..) v(..)
+@parameters x₁ f(..)
+@variables u(..)
 
 # More helpers
 Ω = (x₁ ∈ ClosedInterval(0,1))
 ∫ = Integral(Ω)
 ∇(var) = Differential(x₁)(var)
 
-# Bilinear form
-a(u,v) = ∫(∇(u) ⋅ ∇(v))
-# Linear form
-b(v) = ∫(v)
-# System
-eqs_weak = [a(u(x₁),v(x₁)) ~ b(v(x₁))]
-# BCs
-bcs = [u(0.0) ~ 0., u(1.0) ~ 0.]
-
-@named pde = PDESystem(eqs_weak,bcs,[Ω],[x₁],[u(x₁)])
-
-discretization = ScalarRitzGalerkinFEM(ref_shape -> Lagrange{2,ref_shape,1}(), :u, :v)
-SciMLBase.symbolic_discretize(pde, discretization)
-
-# # ModelingToolkit stuff 2D
-# @parameters x₁ x₂ f
-# @variables u(..) v(..)
-
-# # More helpers
-# Ω = Rectangle((0,1),(0,1))
-# ∫ = Integral((x₁, x₂) ∈ Ω)
-# ∇(var) = Symbolics.gradient(var, [x₁, x₂])
-
 # # Bilinear form
 # a(u,v) = ∫(∇(u) ⋅ ∇(v))
 # # Linear form
 # b(v) = ∫(v)
 # # System
-# eqs_weak = [a(u,v) ~ b(v)]
+# eqs_weak = [a(u(x₁),v(x₁)) ~ b(v(x₁))]
 # # BCs
-# bcs = [u ~ 0.0] # How to constraint this?
-# # bcs = [u(0.0,0.0) ~ 0.]
+# bcs = [u(0.0) ~ 0., u(1.0) ~ 0.]
 
-# @named pde = PDESystem(eqs_weak,bcs,[(x₁, x₂) ∈ Ω],[x₁,x₂],[u])
+# @named pde = PDESystem(eqs_weak,bcs,[Ω],[x₁],[u(x₁)])
+
+# TODO correct definitions.
+grad(var) = Differential(x₁)(var)
+div(var) = Differential(x₁)(var)
+
+eqs = [div(grad(u)) ~ f]
+bcs = [u(0.0) ~ 0., u(1.0) ~ 0.]
+
+@named pde = PDESystem(eqs,bcs,[Ω],[x₁],[u(x₁)])
+
+discretization = ScalarRitzGalerkin(u.f)
+SciMLBase.symbolic_discretize(pde, discretization)
+
+# # ModelingToolkit stuff 2D
+# @parameters x₁ x₂
+# @variables u(..) v(..)
+
+# # More helpers
+# Ω = (x₁, x₂) ∈ Rectangle((0,1),(0,1))
+# ∫ = Integral(Ω)
+# ∇(var) = Symbolics.gradient(var, [x₁, x₂])
+
+# # Bilinear form
+# a(u,v) = ∫(∇(u(x₁, x₂)) ⋅ ∇(v(x₁, x₂)))
+# # Linear form
+# b(v) = ∫(v(x₁, x₂))
+# # System
+# eqs_weak = [a(u,v) ~ b(v)]
+# # # BCs
+# # bcs = [u ~ 0.0] # How to constraint this?
+# bcs = [u(0.0,0.0) ~ 0.]
+
+# @named pde = PDESystem(eqs_weak,bcs,[Ω],[x₁,x₂],[u(x₁,x₂)])
 # # @named pde = PDESystem(eqs_weak,bcs,[x₁∈ClosedInterval(0,1),x₂∈ClosedInterval(0,1)],[x₁,x₂],[u])
 
 # discretization = ScalarRitzGalerkinFEM(ref_shape -> Lagrange{2,ref_shape,1}(), :u, :v)
